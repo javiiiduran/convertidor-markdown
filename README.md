@@ -26,6 +26,11 @@ a Markdown, diseñada para desplegarse **100% gratis**:
 ```
 
 - **Sin API key** → el archivo va a `POST /convert` del backend (gratis).
+- **PDF escaneado sin API key** → si markitdown no encuentra texto, el
+  backend renderiza cada página a imagen con PyMuPDF (100% en memoria) y
+  aplica OCR con Tesseract. Antes del OCR, cada imagen pasa por un
+  preprocesado (escala de grises + autocontraste + binarización con umbral
+  de Otsu) que mejora la precisión. Límite: 20 páginas por PDF.
 - **Con API key** (OpenAI, Anthropic o Gemini) → las imágenes y PDFs van
   **directamente del navegador a la API oficial** del proveedor. Ni el
   archivo ni la llave pasan por nuestro servidor.
