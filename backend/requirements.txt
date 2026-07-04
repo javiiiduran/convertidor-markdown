@@ -1,0 +1,12 @@
+# --- Framework web ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# --- Motor de conversión (Microsoft MarkItDown) ---
+# Extras: soporte de PDF, Word, Excel y PowerPoint.
+markitdown[pdf,docx,xlsx,pptx]>=0.1.1
+
+# --- OCR gratuito para imágenes (requiere binario tesseract-ocr) ---
+pytesseract>=0.3.13
+Pillow>=10.4.0

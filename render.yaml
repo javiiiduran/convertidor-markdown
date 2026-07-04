@@ -1,0 +1,27 @@
+# =============================================================================
+# Blueprint de Render — despliegue del backend en el plan gratuito.
+#
+# NOTA sobre el paquete APT `tesseract-ocr`:
+#   El runtime nativo de Python de Render NO permite instalar paquetes APT,
+#   por lo que este blueprint usa `runtime: docker`. El paquete tesseract-ocr
+#   (junto con los idiomas spa/eng) se instala en `backend/Dockerfile`, que
+#   es el mecanismo oficial soportado por Render para dependencias APT.
+# =============================================================================
+
+services:
+  - type: web
+    name: convertidor-markdown-api
+    runtime: docker
+    plan: free
+    region: frankfurt            # cambia a `oregon` si tu público está en América
+    rootDir: backend             # el Dockerfile y el código viven en /backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /ping       # Render también hará ping interno al servicio
+    autoDeploy: true
+    envVars:
+      # Orígenes permitidos por CORS (separados por comas, sin barra final).
+      # Ajusta estos valores a las URLs reales de tu frontend.
+      - key: FRONTEND_ORIGINS
+        value: "https://javiiiduran.github.io,https://convertidor-markdown.vercel.app,http://localhost:4321"
+      - key: PYTHON_VERSION
+        value: "3.12"

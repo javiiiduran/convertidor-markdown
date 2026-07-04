@@ -1,0 +1,44 @@
+# =============================================================================
+# Keep-Alive redundante para el backend en Render (plan gratuito).
+#
+# Render suspende los servicios gratuitos tras ~15 minutos sin tráfico
+# externo. Este cron hace una petición real al endpoint /ping cada 14
+# minutos para mantener el servicio despierto.
+#
+# Configuración opcional: define la variable de repositorio RENDER_API_URL
+# (Settings > Secrets and variables > Actions > Variables) con la URL base
+# de tu servicio en Render. Si no existe, se usa la URL por defecto.
+# =============================================================================
+
+name: Keep Alive (Render)
+
+on:
+  schedule:
+    # Cada 14 minutos, por debajo del umbral de suspensión de Render (~15 min).
+    - cron: "*/14 * * * *"
+  # Permite lanzarlo manualmente desde la pestaña Actions para probarlo.
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    name: Ping /ping en Render
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Curl al endpoint /ping
+        env:
+          # -f hace que curl falle (exit != 0) ante respuestas HTTP >= 400,
+          # de modo que el workflow queda en rojo si la API no responde bien.
+          API_URL: ${{ vars.RENDER_API_URL || 'https://convertidor-markdown-api.onrender.com' }}
+        run: |
+          echo "Haciendo ping a: ${API_URL}/ping"
+          curl -fsS \
+            --retry 3 \
+            --retry-delay 10 \
+            --retry-all-errors \
+            --max-time 60 \
+            "${API_URL}/ping"
+          echo ""
+          echo "✅ Servicio activo."
