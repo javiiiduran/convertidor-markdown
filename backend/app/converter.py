@@ -1,27 +1,26 @@
 """
-Motor de conversión a Markdown.
+Motor de conversión a Markdown, optimizado para 512 MB de RAM (Render free).
 
-Estrategia:
-  - Documentos (PDF con texto nativo, Office, texto plano): `markitdown`
-    de Microsoft, procesando estrictamente en memoria (io.BytesIO).
-  - PDF escaneado (markitdown devuelve texto vacío): fallback automático
-    que renderiza cada página a imagen con PyMuPDF (en memoria, sin
-    binarios externos ni archivos temporales) y aplica OCR con pytesseract.
-  - Imágenes (cuando el cliente NO aporta API keys de LLM): OCR gratuito
-    con `pytesseract` (requiere el binario `tesseract-ocr`, instalado vía
-    Docker en Render).
+Estrategia por tipo de archivo:
+  - PDF: ruta rápida con PyMuPDF, SIN pasar por markitdown.
+      * Si tiene texto nativo -> se extrae directamente (ligero y rápido).
+      * Si está escaneado    -> pipeline PyMuPDF (render a imagen) + OCR
+        con pytesseract, con preprocesado de imagen.
+    Esto evita que markitdown inicialice sus detectores basados en ONNX
+    (magika/onnxruntime) para PDFs, que era la causa del crash por OOM.
+  - Office (docx/xlsx/pptx) y texto: `markitdown`, instanciado de forma
+    PEREZOSA (solo la primera vez que se necesita) y en modo mínimo:
+    sin plugins, sin cliente LLM y sin Document Intelligence, para no
+    cargar modelos pesados en memoria al arrancar el servicio.
+  - Imágenes: OCR con pytesseract (cuando el cliente no aporta API keys).
 
-Preprocesado de OCR: antes de pasar cualquier imagen por Tesseract se
-aplica escala de grises + autocontraste + binarización con umbral de Otsu
-(implementado con PIL, sin dependencia de OpenCV) para mejorar la precisión.
-
-Nada se escribe jamás en el disco del servidor.
+Preprocesado de OCR: escala de grises + autocontraste + binarización con
+umbral de Otsu (solo PIL, sin OpenCV). Nada se escribe jamás en disco.
 """
 
 import io
 import logging
-
-from markitdown import MarkItDown, StreamInfo
+import threading
 
 from .security import IMAGE_EXTENSIONS
 
@@ -37,14 +36,14 @@ class ConversionError(Exception):
         self.status_code = status_code
 
 
-# Instancia única y reutilizable de markitdown.
-# enable_plugins=False reduce superficie de ataque (sin plugins de terceros).
-_markitdown = MarkItDown(enable_plugins=False)
+# --- Parámetros de la ruta PDF y del OCR -------------------------------------
 
-# --- Parámetros del fallback OCR para PDFs escaneados -----------------------
+# Umbral mínimo de caracteres para considerar que un PDF tiene texto nativo
+# (los escaneados suelen devolver cadenas vacías o restos de 1-2 caracteres).
+_MIN_NATIVE_TEXT_CHARS = 25
 
 # Resolución de renderizado de página. 200 DPI equilibra precisión de OCR
-# y consumo de RAM (el plan gratuito de Render tiene 512 MB).
+# y consumo de RAM.
 _OCR_RENDER_DPI = 200
 
 # Máximo de páginas a procesar por OCR: evita agotar memoria/CPU del plan
@@ -59,7 +58,6 @@ _SCANNED_PDF_HINT = (
 
 # Mapeo de extensión -> mimetype para ayudar a markitdown con el stream.
 _MIME_BY_EXTENSION = {
-    ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -75,64 +73,130 @@ _MIME_BY_EXTENSION = {
 }
 
 
+# ---------------------------------------------------------------------------
+# markitdown: instancia perezosa y mínima (ahorro de RAM en el arranque)
+# ---------------------------------------------------------------------------
+
+_markitdown_instance = None
+_markitdown_lock = threading.Lock()
+
+
+def _get_markitdown():
+    """
+    Devuelve la instancia única de MarkItDown, creándola solo la primera
+    vez que se necesita (lazy singleton, seguro entre hilos).
+
+    Configuración mínima deliberada:
+      - enable_plugins=False  -> sin conversores de terceros.
+      - llm_client=None       -> sin cliente LLM (no describe imágenes,
+                                 no carga nada relacionado con modelos).
+      - sin docintel_endpoint -> sin Azure Document Intelligence.
+
+    Al ser perezosa, los peores costes de importación (magika/onnxruntime,
+    usados por markitdown para detectar tipos de archivo) no se pagan al
+    arrancar el servicio ni al procesar PDFs o imágenes, solo si llega a
+    entrar un documento de Office/texto.
+    """
+    global _markitdown_instance
+    if _markitdown_instance is None:
+        with _markitdown_lock:
+            if _markitdown_instance is None:
+                from markitdown import MarkItDown
+
+                logger.info("Inicializando MarkItDown (modo mínimo, sin LLM)")
+                _markitdown_instance = MarkItDown(
+                    enable_plugins=False,
+                    llm_client=None,
+                )
+    return _markitdown_instance
+
+
 def convert_to_markdown(data: bytes, extension: str, filename: str) -> dict:
     """
     Punto de entrada del motor de conversión.
 
     Devuelve un dict con:
       - markdown: el contenido convertido.
-      - engine:   motor utilizado ("markitdown", "ocr-tesseract" u
-                  "ocr-tesseract-pdf" para el fallback de PDF escaneado).
+      - engine:   motor utilizado ("pymupdf", "markitdown", "ocr-tesseract"
+                  u "ocr-tesseract-pdf").
       - warning:  aviso opcional (p. ej. PDF escaneado sin texto).
     """
+    if extension == ".pdf":
+        # Ruta rápida: los PDFs NUNCA pasan por markitdown (evita ONNX/OOM).
+        return _convert_pdf(data, filename)
     if extension in IMAGE_EXTENSIONS:
         return _convert_image_with_ocr(data)
     return _convert_document_with_markitdown(data, extension, filename)
 
 
-def _convert_document_with_markitdown(
-    data: bytes, extension: str, filename: str
-) -> dict:
-    """Convierte documentos en memoria usando markitdown."""
-    stream = io.BytesIO(data)
-    stream_info = StreamInfo(
-        extension=extension,
-        mimetype=_MIME_BY_EXTENSION.get(extension),
-        filename=filename,
-    )
+# ---------------------------------------------------------------------------
+# Ruta PDF: extractor ligero PyMuPDF -> fallback OCR (sin markitdown)
+# ---------------------------------------------------------------------------
+
+def _convert_pdf(data: bytes, filename: str) -> dict:
+    """
+    Convierte un PDF priorizando el extractor ligero:
+
+      1. PyMuPDF extrae el texto nativo página a página (coste en RAM
+         mínimo). Si hay texto suficiente, se devuelve inmediatamente.
+      2. Si no hay texto (PDF escaneado), se salta directamente al pipeline
+         de OCR (render de página + Tesseract), sin tocar markitdown.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError as exc:
+        raise ConversionError(
+            "El servidor no tiene soporte de PDF instalado.", status_code=503
+        ) from exc
 
     try:
-        result = _markitdown.convert_stream(stream, stream_info=stream_info)
-    except Exception as exc:  # markitdown lanza excepciones heterogéneas
-        logger.exception("Fallo de markitdown al convertir '%s'", filename)
+        document = fitz.open(stream=data, filetype="pdf")
+    except Exception as exc:
+        logger.exception("PyMuPDF no pudo abrir '%s'", filename)
         raise ConversionError(
-            "No se pudo convertir el documento. Puede estar corrupto, "
-            "protegido con contraseña o en un formato no compatible.",
+            "No se pudo abrir el PDF. Puede estar corrupto o protegido "
+            "con contraseña.",
             status_code=422,
         ) from exc
 
-    markdown = (result.markdown or "").strip()
-    warning = None
+    # --- 1. Intento ligero: texto nativo ---
+    try:
+        if document.needs_pass:
+            raise ConversionError(
+                "El PDF está protegido con contraseña.", status_code=422
+            )
 
-    if not markdown and extension == ".pdf":
-        # PDF sin capa de texto: probablemente escaneado. Antes de rendirnos,
-        # se intenta el fallback de OCR página a página (PyMuPDF + Tesseract).
-        logger.info("PDF sin texto nativo: intentando fallback OCR ('%s')", filename)
-        ocr_result = _ocr_scanned_pdf(data)
-        if ocr_result is not None:
-            return ocr_result
+        page_texts = [page.get_text("text").strip() for page in document]
+    except ConversionError:
+        document.close()
+        raise
+    except Exception:
+        logger.exception("Fallo extrayendo texto nativo de '%s'", filename)
+        page_texts = []
+    finally:
+        # El documento se conserva abierto solo si hará falta para el OCR;
+        # como _ocr_scanned_pdf reabre desde bytes, se cierra siempre aquí.
+        document.close()
 
-        warning = (
+    native_text = "\n\n".join(t for t in page_texts if t).strip()
+    if len(native_text) >= _MIN_NATIVE_TEXT_CHARS:
+        return {"markdown": native_text, "engine": "pymupdf", "warning": None}
+
+    # --- 2. PDF escaneado: directo al pipeline de OCR ---
+    logger.info("PDF sin texto nativo: aplicando OCR ('%s')", filename)
+    ocr_result = _ocr_scanned_pdf(data)
+    if ocr_result is not None:
+        return ocr_result
+
+    return {
+        "markdown": native_text,
+        "engine": "pymupdf",
+        "warning": (
             "El PDF no contiene texto extraíble (posiblemente escaneado) y "
             f"el OCR no pudo recuperar contenido. {_SCANNED_PDF_HINT}"
-        )
+        ),
+    }
 
-    return {"markdown": markdown, "engine": "markitdown", "warning": warning}
-
-
-# ---------------------------------------------------------------------------
-# Fallback OCR para PDFs escaneados (PyMuPDF + pytesseract, en memoria)
-# ---------------------------------------------------------------------------
 
 def _ocr_scanned_pdf(data: bytes) -> dict | None:
     """
@@ -169,6 +233,9 @@ def _ocr_scanned_pdf(data: bytes) -> dict | None:
             image = Image.frombytes(
                 "L", (pixmap.width, pixmap.height), pixmap.samples
             )
+            # Liberar el pixmap cuanto antes: cada página se procesa y se
+            # descarta antes de renderizar la siguiente (RAM acotada).
+            del pixmap
             try:
                 text = _run_tesseract(_preprocess_for_ocr(image))
             finally:
@@ -204,6 +271,37 @@ def _ocr_scanned_pdf(data: bytes) -> dict | None:
         "engine": "ocr-tesseract-pdf",
         "warning": warning,
     }
+
+
+# ---------------------------------------------------------------------------
+# Office y texto plano: markitdown (perezoso, modo mínimo)
+# ---------------------------------------------------------------------------
+
+def _convert_document_with_markitdown(
+    data: bytes, extension: str, filename: str
+) -> dict:
+    """Convierte documentos de Office/texto en memoria usando markitdown."""
+    from markitdown import StreamInfo
+
+    stream = io.BytesIO(data)
+    stream_info = StreamInfo(
+        extension=extension,
+        mimetype=_MIME_BY_EXTENSION.get(extension),
+        filename=filename,
+    )
+
+    try:
+        result = _get_markitdown().convert_stream(stream, stream_info=stream_info)
+    except Exception as exc:  # markitdown lanza excepciones heterogéneas
+        logger.exception("Fallo de markitdown al convertir '%s'", filename)
+        raise ConversionError(
+            "No se pudo convertir el documento. Puede estar corrupto, "
+            "protegido con contraseña o en un formato no compatible.",
+            status_code=422,
+        ) from exc
+
+    markdown = (result.markdown or "").strip()
+    return {"markdown": markdown, "engine": "markitdown", "warning": None}
 
 
 # ---------------------------------------------------------------------------

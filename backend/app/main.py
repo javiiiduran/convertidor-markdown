@@ -17,6 +17,7 @@ Principios de seguridad aplicados:
 import logging
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -113,11 +114,15 @@ async def convert(file: UploadFile = File(...)) -> dict:
     # 3. El contenido real debe coincidir con la extensión declarada.
     validate_magic_numbers(data, extension)
 
-    # 4. Conversión estrictamente en memoria.
+    # 4. Conversión estrictamente en memoria, ejecutada en un hilo del
+    #    threadpool: la extracción/OCR es CPU-intensiva y bloquearía el
+    #    event loop (dejando /ping sin responder durante la conversión).
     logger.info(
         "Convirtiendo '%s' (%s, %d bytes)", safe_name, extension, total_size
     )
-    result = convert_to_markdown(data, extension, safe_name)
+    result = await run_in_threadpool(
+        convert_to_markdown, data, extension, safe_name
+    )
 
     return {
         "filename": safe_name,

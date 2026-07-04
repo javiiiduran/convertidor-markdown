@@ -12,11 +12,12 @@ a Markdown, diseñada para desplegarse **100% gratis**:
 ## Arquitectura híbrida de conversión
 
 ```
-                        ┌──────────────────────────────┐
-   PDF / Office /       │  Backend FastAPI (Render)    │
-   texto sin API key ──▶│  markitdown (en memoria)     │
-                        │  OCR pytesseract (imágenes)  │
-                        └──────────────────────────────┘
+                        ┌──────────────────────────────────┐
+   PDF / Office /       │  Backend FastAPI (Render)        │
+   texto sin API key ──▶│  PDF: PyMuPDF (texto nativo/OCR) │
+                        │  Office/texto: markitdown (lazy) │
+                        │  Imágenes: OCR pytesseract       │
+                        └──────────────────────────────────┘
 
    Imagen / PDF         ┌──────────────────────────────┐
    escaneado CON   ────▶│  fetch directo del navegador │
@@ -26,11 +27,16 @@ a Markdown, diseñada para desplegarse **100% gratis**:
 ```
 
 - **Sin API key** → el archivo va a `POST /convert` del backend (gratis).
-- **PDF escaneado sin API key** → si markitdown no encuentra texto, el
-  backend renderiza cada página a imagen con PyMuPDF (100% en memoria) y
-  aplica OCR con Tesseract. Antes del OCR, cada imagen pasa por un
-  preprocesado (escala de grises + autocontraste + binarización con umbral
-  de Otsu) que mejora la precisión. Límite: 20 páginas por PDF.
+- **PDFs** → ruta rápida con PyMuPDF que **no pasa por markitdown**: el
+  texto nativo se extrae directamente y, si el PDF está escaneado, cada
+  página se renderiza a imagen (100% en memoria) y se le aplica OCR con
+  Tesseract. Antes del OCR, cada imagen pasa por un preprocesado (escala de
+  grises + autocontraste + binarización con umbral de Otsu) que mejora la
+  precisión. Límite: 20 páginas por PDF.
+- **Optimización de RAM (512 MB de Render free)**: markitdown se instancia
+  de forma perezosa y en modo mínimo (sin plugins ni LLM), de modo que sus
+  detectores basados en ONNX (magika/onnxruntime) solo se cargan si entra
+  un documento de Office/texto — nunca para PDFs ni imágenes.
 - **Con API key** (OpenAI, Anthropic o Gemini) → las imágenes y PDFs van
   **directamente del navegador a la API oficial** del proveedor. Ni el
   archivo ni la llave pasan por nuestro servidor.
