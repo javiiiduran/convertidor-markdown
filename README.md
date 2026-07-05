@@ -80,45 +80,16 @@ a Markdown, con arquitectura desacoplada:
 └── .github/workflows/       # Automatizaciones de CI/CD
 ```
 
-## Desarrollo local
-
-### Backend
-
-```bash
-cd backend
-python -m venv .venv
-# Windows: .venv\Scripts\activate | Linux/Mac: source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-cp .env.example .env   # ajusta PUBLIC_API_URL si hace falta
-npm run dev            # http://localhost:4321
-```
-
-## Despliegue en Producción
-
-Este proyecto está estructurado de forma desacoplada (frontend estático y
-API independiente), lo que permite desplegarlo fácilmente en cualquier
-arquitectura en la nube de tu elección.
-
-- **Backend**: requiere un entorno que soporte Python 3.12 (o superior) o
-  contenedores Docker. Asegúrate de configurar la variable de entorno
-  `FRONTEND_ORIGINS` con la URL de tu cliente.
-- **Frontend**: puede compilarse como un sitio estático moderno (SSG) y
-  servirse mediante cualquier CDN o proveedor de hosting estático. Requiere
-  definir la variable `PUBLIC_API_URL` apuntando a la URL del backend.
 
 ## Privacidad de las API keys
 
 Las llaves de OpenAI / Anthropic / Gemini / DeepSeek se guardan **solo en el
 `localStorage` del navegador del usuario** y se usan únicamente en peticiones
 `fetch` directas navegador → API oficial. **Nunca se envían a este backend.**
+
+
+## Link del Convertidor
+https://convertidor-markdown.vercel.app/
 
 ## Licencia
 
