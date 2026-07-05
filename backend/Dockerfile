@@ -1,9 +1,10 @@
 # =============================================================================
 # Dockerfile del backend — optimizado para el plan gratuito de Render.
 #
-# Instala el paquete APT `tesseract-ocr` (+ idiomas español e inglés) para
-# el OCR gratuito con pytesseract. Render no permite instalar paquetes APT
-# en su runtime nativo de Python, por eso se usa runtime Docker.
+# Sin paquetes APT: el OCR local (tesseract) se eliminó porque la CPU del
+# plan gratuito dejaba las peticiones colgadas. Las imágenes y PDFs
+# escaneados se procesan en el cliente con la API key de LLM del usuario.
+# Resultado: build mucho más rápido y contenedor más ligero.
 # =============================================================================
 
 FROM python:3.12-slim
@@ -12,14 +13,6 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
-
-# --- Paquetes del sistema: motor OCR Tesseract + idiomas ---
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        tesseract-ocr \
-        tesseract-ocr-spa \
-        tesseract-ocr-eng \
-    && rm -rf /var/lib/apt/lists/*
 
 # --- Usuario sin privilegios (principio de mínimo privilegio) ---
 RUN useradd --create-home --shell /usr/sbin/nologin appuser

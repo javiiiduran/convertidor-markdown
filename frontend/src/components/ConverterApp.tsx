@@ -11,9 +11,13 @@ import ApiKeysPanel from "./ApiKeysPanel";
 import DropZone from "./DropZone";
 import ResultViewer from "./ResultViewer";
 import { wakeUpBackend } from "../lib/backendClient";
-import { convertFile, type ConversionResult } from "../lib/hybridConverter";
+import {
+  convertFile,
+  LlmKeyRequiredError,
+  type ConversionResult,
+} from "../lib/hybridConverter";
 
-type Status = "idle" | "converting" | "done" | "error";
+type Status = "idle" | "converting" | "done" | "error" | "needs-key";
 
 export default function ConverterApp() {
   const [status, setStatus] = useState<Status>("idle");
@@ -40,6 +44,13 @@ export default function ConverterApp() {
       setResult(conversion);
       setStatus("done");
     } catch (error) {
+      // Caso especial: falta API key para visión artificial. Se muestra
+      // un aviso amigable (ámbar), no un error, y sin cargador.
+      if (error instanceof LlmKeyRequiredError) {
+        setErrorMessage(error.message);
+        setStatus("needs-key");
+        return;
+      }
       setErrorMessage(
         error instanceof Error ? error.message : "Error desconocido.",
       );
@@ -60,8 +71,8 @@ export default function ConverterApp() {
           ].join(" ")}
         >
           {hasActiveKey
-            ? "🤖 Modo IA: imágenes y PDFs van directos a tu proveedor"
-            : "🆓 Modo gratuito: conversión en el backend (markitdown + OCR)"}
+            ? "🤖 Modo IA: imágenes y PDFs escaneados van directos a tu proveedor"
+            : "🆓 Modo gratuito: PDFs y documentos con texto (las imágenes requieren API key)"}
         </span>
 
         <button
@@ -86,6 +97,22 @@ export default function ConverterApp() {
           <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
           Convirtiendo <strong>{currentFile}</strong>… Si el servidor gratuito
           estaba dormido, puede tardar hasta un minuto.
+        </div>
+      )}
+
+      {status === "needs-key" && (
+        <div
+          className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300"
+          role="alert"
+        >
+          <p>⚠️ {errorMessage}</p>
+          <button
+            type="button"
+            onClick={() => setShowSettings(true)}
+            className="self-start rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700"
+          >
+            ⚙️ Abrir panel de Ajustes
+          </button>
         </div>
       )}
 

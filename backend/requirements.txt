@@ -3,15 +3,10 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 
-# --- Motor de conversión (Microsoft MarkItDown) ---
-# Extras: soporte de PDF, Word, Excel y PowerPoint.
-markitdown[pdf,docx,xlsx,pptx]>=0.1.1
+# --- Conversión de Office y texto (Microsoft MarkItDown) ---
+# Solo extras de Office: los PDFs se procesan con PyMuPDF, y las imágenes
+# y PDFs escaneados se delegan al LLM del cliente (sin OCR en el servidor).
+markitdown[docx,xlsx,pptx]>=0.1.1
 
-# --- OCR gratuito para imágenes (requiere binario tesseract-ocr) ---
-pytesseract>=0.3.13
-Pillow>=10.4.0
-
-# --- Fallback OCR para PDFs escaneados ---
-# PyMuPDF renderiza páginas de PDF a imágenes 100% en memoria (sin binarios
-# externos como poppler ni archivos temporales, a diferencia de pdf2image).
+# --- Extracción rápida de texto nativo de PDFs (100% en memoria) ---
 PyMuPDF>=1.24.0

@@ -2,15 +2,17 @@
  * Lógica de conversión híbrida.
  *
  * Reglas de decisión:
- *  - Documento (PDF/Office/texto) SIN API key      -> backend FastAPI (gratis).
- *  - Imagen o PDF CON API key del proveedor activo -> fetch directo del
+ *  - Documento (PDF/Office/texto) -> backend FastAPI (gratis, rápido).
+ *  - Imagen o PDF escaneado CON API key de visión -> fetch directo del
  *    navegador a la API oficial (el archivo NUNCA pasa por nuestro backend).
- *  - Imagen SIN API key                            -> backend (OCR gratuito).
- *  - DeepSeek no tiene visión: imágenes/PDF caen al backend con un aviso.
+ *  - Imagen SIN API key -> se bloquea INMEDIATAMENTE en el cliente (el
+ *    servidor ya no hace OCR local).
+ *  - PDF escaneado SIN API key -> el backend responde 422 con
+ *    code="LLM_REQUIRED" y se muestra el mismo aviso amigable.
  */
 
 import { IMAGE_MIME_TYPES, MAX_FILE_SIZE_BYTES, PDF_MIME_TYPE } from "./config";
-import { convertViaBackend } from "./backendClient";
+import { BackendError, convertViaBackend } from "./backendClient";
 import { convertViaLlm, fileToBase64 } from "./llmProviders";
 import { getActiveKey, PROVIDERS, type ProviderId } from "./storage";
 
@@ -22,6 +24,18 @@ export interface ConversionResult {
   engineLabel: string;
   warning: string | null;
 }
+
+/**
+ * Error específico: el archivo necesita visión artificial y el usuario
+ * no tiene API key configurada. La UI lo muestra como aviso amigable
+ * (ámbar), no como error.
+ */
+export class LlmKeyRequiredError extends Error {}
+
+export const LLM_KEY_REQUIRED_MESSAGE =
+  "Las imágenes y PDFs escaneados requieren una API Key (Claude, ChatGPT, " +
+  "Gemini o DeepSeek) para ser procesados mediante visión artificial. " +
+  "Por favor, agrégala en el panel de Ajustes.";
 
 /** Proveedores con capacidad de visión (imagen y PDF). */
 const VISION_PROVIDERS = new Set<ProviderId>(["openai", "anthropic", "gemini"]);
@@ -59,12 +73,24 @@ export async function convertFile(file: File): Promise<ConversionResult> {
   const isPdf = mimeType === PDF_MIME_TYPE;
 
   const { provider, key } = getActiveKey();
-  const canUseLlm =
-    (isImage || isPdf) && key.length > 0 && VISION_PROVIDERS.has(provider);
+  const hasVisionKey = key.length > 0 && VISION_PROVIDERS.has(provider);
 
-  if (canUseLlm) {
-    // Ruta privada: navegador -> API oficial del proveedor. Nuestro backend
-    // no ve ni el archivo ni la key.
+  // --- Validación temprana: las imágenes SIEMPRE necesitan visión ---
+  // El backend ya no hace OCR, así que se bloquea aquí, sin subir nada.
+  if (isImage && !hasVisionKey) {
+    if (key.length > 0) {
+      // Tiene key pero de un proveedor sin visión (DeepSeek).
+      throw new Error(
+        "DeepSeek no soporta visión (imágenes/PDF escaneados). Configura " +
+          "una API key de OpenAI, Anthropic o Gemini en el panel de Ajustes.",
+      );
+    }
+    throw new LlmKeyRequiredError(LLM_KEY_REQUIRED_MESSAGE);
+  }
+
+  // --- Ruta privada: navegador -> API oficial del proveedor ---
+  // Nuestro backend no ve ni el archivo ni la key.
+  if ((isImage || isPdf) && hasVisionKey) {
     const base64 = await fileToBase64(file);
     const markdown = await convertViaLlm(provider, {
       base64,
@@ -81,21 +107,20 @@ export async function convertFile(file: File): Promise<ConversionResult> {
     };
   }
 
-  // Ruta gratuita: backend FastAPI (markitdown u OCR con tesseract).
-  const result = await convertViaBackend(file);
-
-  let warning = result.warning;
-  if ((isImage || isPdf) && key.length > 0 && !VISION_PROVIDERS.has(provider)) {
-    warning =
-      "DeepSeek no soporta visión, así que este archivo se procesó en el " +
-      "backend gratuito. Para transcripción con IA usa OpenAI, Anthropic o Gemini." +
-      (warning ? ` ${warning}` : "");
+  // --- Ruta gratuita: backend FastAPI (PyMuPDF / markitdown) ---
+  try {
+    const result = await convertViaBackend(file);
+    return {
+      markdown: result.markdown,
+      engine: "backend",
+      engineLabel: `Backend gratuito (${result.engine})`,
+      warning: result.warning,
+    };
+  } catch (error) {
+    // PDF escaneado detectado por el backend: mismo aviso amigable.
+    if (error instanceof BackendError && error.code === "LLM_REQUIRED") {
+      throw new LlmKeyRequiredError(LLM_KEY_REQUIRED_MESSAGE);
+    }
+    throw error;
   }
-
-  return {
-    markdown: result.markdown,
-    engine: "backend",
-    engineLabel: `Backend gratuito (${result.engine})`,
-    warning,
-  };
 }

@@ -6,7 +6,7 @@ a Markdown, diseñada para desplegarse **100% gratis**:
 | Capa | Tecnología | Hosting gratuito |
 |---|---|---|
 | Frontend | Astro + React (islas) + Tailwind CSS 4 | Vercel (deploy automático desde el repo) |
-| Backend | FastAPI + [markitdown](https://github.com/microsoft/markitdown) + pytesseract | Render (Docker, plan free) |
+| Backend | FastAPI + PyMuPDF + [markitdown](https://github.com/microsoft/markitdown) | Render (Docker, plan free) |
 | Keep-alive | GitHub Actions (cron cada 14 min) | GitHub |
 
 ## Arquitectura híbrida de conversión
@@ -14,9 +14,8 @@ a Markdown, diseñada para desplegarse **100% gratis**:
 ```
                         ┌──────────────────────────────────┐
    PDF / Office /       │  Backend FastAPI (Render)        │
-   texto sin API key ──▶│  PDF: PyMuPDF (texto nativo/OCR) │
+   texto            ──▶ │  PDF: PyMuPDF (texto nativo)     │
                         │  Office/texto: markitdown (lazy) │
-                        │  Imágenes: OCR pytesseract       │
                         └──────────────────────────────────┘
 
    Imagen / PDF         ┌──────────────────────────────┐
@@ -24,24 +23,28 @@ a Markdown, diseñada para desplegarse **100% gratis**:
    API key propia       │  a OpenAI / Anthropic /      │
                         │  Gemini (visión)             │
                         └──────────────────────────────┘
+
+   Imagen / PDF escaneado SIN API key ──▶ aviso inmediato en la UI
+   (el servidor no hace OCR: se pide configurar una API key)
 ```
 
-- **Sin API key** → el archivo va a `POST /convert` del backend (gratis).
-- **PDFs** → ruta rápida con PyMuPDF que **no pasa por markitdown**: el
-  texto nativo se extrae directamente y, si el PDF está escaneado, cada
-  página se renderiza a imagen (100% en memoria) y se le aplica OCR con
-  Tesseract. Antes del OCR, cada imagen pasa por un preprocesado (escala de
-  grises + autocontraste + binarización con umbral de Otsu) que mejora la
-  precisión. Límite: 20 páginas por PDF.
+- **Documentos con texto** (PDF nativo, Office, texto plano) → van a
+  `POST /convert` del backend (gratis). Los PDFs usan la ruta rápida de
+  PyMuPDF y **no pasan por markitdown**.
+- **Sin OCR en el servidor**: la CPU del plan gratuito de Render no puede
+  con Tesseract (las peticiones se quedaban colgadas), así que las imágenes
+  y PDFs escaneados requieren una API key de visión. El frontend bloquea
+  las imágenes sin key **antes de subir nada**, y si el backend detecta un
+  PDF sin texto responde al instante con `422 { code: "LLM_REQUIRED" }`.
 - **Optimización de RAM (512 MB de Render free)**: markitdown se instancia
   de forma perezosa y en modo mínimo (sin plugins ni LLM), de modo que sus
   detectores basados en ONNX (magika/onnxruntime) solo se cargan si entra
-  un documento de Office/texto — nunca para PDFs ni imágenes.
-- **Con API key** (OpenAI, Anthropic o Gemini) → las imágenes y PDFs van
-  **directamente del navegador a la API oficial** del proveedor. Ni el
-  archivo ni la llave pasan por nuestro servidor.
-- **DeepSeek**: su API actual no soporta visión; se acepta la key pero las
-  imágenes/PDF caen automáticamente al backend gratuito (con aviso en la UI).
+  un documento de Office/texto — nunca para PDFs.
+- **Con API key** (OpenAI, Anthropic o Gemini) → las imágenes y PDFs
+  escaneados van **directamente del navegador a la API oficial** del
+  proveedor. Ni el archivo ni la llave pasan por nuestro servidor.
+- **DeepSeek**: su API actual no soporta visión; si es el proveedor activo,
+  la UI pide usar OpenAI, Anthropic o Gemini para imágenes/escaneos.
 
 ## Seguridad implementada (backend)
 
@@ -64,9 +67,9 @@ a Markdown, diseñada para desplegarse **100% gratis**:
 │   ├── app/
 │   │   ├── main.py          # API FastAPI (/ping, /convert) + CORS
 │   │   ├── security.py      # Magic numbers, sanitización, lista blanca
-│   │   ├── converter.py     # markitdown + OCR pytesseract (en memoria)
+│   │   ├── converter.py     # PyMuPDF (PDF) + markitdown lazy (Office)
 │   │   └── config.py        # Límites y orígenes CORS
-│   ├── Dockerfile           # Instala APT tesseract-ocr (+ spa/eng)
+│   ├── Dockerfile           # python-slim, sin paquetes APT (ligero)
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
@@ -92,9 +95,6 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-> Para el OCR local necesitas el binario Tesseract
-> ([instalador Windows](https://github.com/UB-Mannheim/tesseract/wiki)).
-> Sin él, todo funciona salvo la conversión de imágenes sin API key.
 
 ### Frontend
 
@@ -116,10 +116,6 @@ npm run dev            # http://localhost:4321
    `FRONTEND_ORIGINS` del servicio (lista separada por comas, sin barra
    final). El middleware CORS la lee dinámicamente en cada arranque.
 
-> ⚠️ **Nota sobre APT**: el runtime nativo de Python de Render no permite
-> instalar paquetes APT, por eso `render.yaml` usa `runtime: docker` y el
-> paquete `tesseract-ocr` se instala en `backend/Dockerfile` (mecanismo
-> oficial soportado por Render).
 
 ### 2. Frontend en Vercel
 

@@ -61,7 +61,12 @@ async def handle_validation_error(_, exc: FileValidationError) -> JSONResponse:
 
 @app.exception_handler(ConversionError)
 async def handle_conversion_error(_, exc: ConversionError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+    # `code` es machine-readable (p. ej. "LLM_REQUIRED"): el frontend lo usa
+    # para distinguir "necesita API key de LLM" de un error genérico.
+    content: dict = {"detail": exc.message}
+    if exc.code:
+        content["code"] = exc.code
+    return JSONResponse(status_code=exc.status_code, content=content)
 
 
 # --- Endpoints ---------------------------------------------------------------

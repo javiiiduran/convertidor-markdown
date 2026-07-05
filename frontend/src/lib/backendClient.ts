@@ -13,6 +13,17 @@ export interface BackendConversionResponse {
   warning: string | null;
 }
 
+/** Error del backend con código machine-readable opcional. */
+export class BackendError extends Error {
+  /** P. ej. "LLM_REQUIRED" cuando el archivo necesita visión artificial. */
+  code?: string;
+
+  constructor(message: string, code?: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
 /**
  * Envía el archivo a POST /convert del backend.
  * Lanza Error con mensaje legible si algo falla.
@@ -38,15 +49,17 @@ export async function convertViaBackend(
   }
 
   if (!response.ok) {
-    // El backend devuelve errores uniformes como { detail: "mensaje" }.
+    // El backend devuelve errores uniformes como { detail, code? }.
     let detail = `Error del servidor (HTTP ${response.status}).`;
+    let code: string | undefined;
     try {
       const body = await response.json();
       if (typeof body?.detail === "string") detail = body.detail;
+      if (typeof body?.code === "string") code = body.code;
     } catch {
       /* cuerpo no-JSON: se conserva el mensaje genérico */
     }
-    throw new Error(detail);
+    throw new BackendError(detail, code);
   }
 
   return (await response.json()) as BackendConversionResponse;

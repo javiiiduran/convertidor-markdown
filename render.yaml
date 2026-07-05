@@ -1,11 +1,10 @@
 # =============================================================================
 # Blueprint de Render — despliegue del backend en el plan gratuito.
 #
-# NOTA sobre el paquete APT `tesseract-ocr`:
-#   El runtime nativo de Python de Render NO permite instalar paquetes APT,
-#   por lo que este blueprint usa `runtime: docker`. El paquete tesseract-ocr
-#   (junto con los idiomas spa/eng) se instala en `backend/Dockerfile`, que
-#   es el mecanismo oficial soportado por Render para dependencias APT.
+# Runtime Docker con imagen python-slim, sin paquetes APT: el OCR local se
+# eliminó (la CPU del plan gratuito no lo soporta), así que el build es
+# rápido y el contenedor ligero. Imágenes y PDFs escaneados se procesan en
+# el navegador del usuario con su propia API key de LLM.
 # =============================================================================
 
 services:
