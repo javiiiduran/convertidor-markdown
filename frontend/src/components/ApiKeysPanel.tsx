@@ -1,20 +1,24 @@
 /**
- * Panel de configuración de API keys de proveedores LLM.
+ * Panel de configuración de API keys y modelos de proveedores LLM.
  *
- * Las llaves se guardan EXCLUSIVAMENTE en localStorage del navegador.
- * Nunca se envían a nuestro backend.
+ * Las llaves y la selección de modelo se guardan EXCLUSIVAMENTE en
+ * localStorage del navegador. Nunca se envían a nuestro backend.
  */
 
 import { useEffect, useState } from "react";
 import {
   clearApiKeys,
+  getDefaultModels,
   loadActiveProvider,
   loadApiKeys,
+  loadSelectedModels,
   PROVIDERS,
   saveActiveProvider,
   saveApiKeys,
+  saveSelectedModels,
   type ApiKeys,
   type ProviderId,
+  type SelectedModels,
 } from "../lib/storage";
 
 interface ApiKeysPanelProps {
@@ -29,6 +33,7 @@ export default function ApiKeysPanel({ onKeysChange }: ApiKeysPanelProps) {
     gemini: "",
     deepseek: "",
   });
+  const [models, setModels] = useState<SelectedModels>(getDefaultModels());
   const [activeProvider, setActiveProvider] = useState<ProviderId>("openai");
   const [visible, setVisible] = useState<Record<string, boolean>>({});
   const [savedMessage, setSavedMessage] = useState(false);
@@ -36,6 +41,7 @@ export default function ApiKeysPanel({ onKeysChange }: ApiKeysPanelProps) {
   // Cargar estado persistido al montar (solo en cliente).
   useEffect(() => {
     setKeys(loadApiKeys());
+    setModels(loadSelectedModels());
     setActiveProvider(loadActiveProvider());
   }, []);
 
@@ -49,6 +55,7 @@ export default function ApiKeysPanel({ onKeysChange }: ApiKeysPanelProps) {
       Object.entries(keys).map(([k, v]) => [k, v.trim()]),
     ) as unknown as ApiKeys;
     saveApiKeys(trimmed);
+    saveSelectedModels(models);
     saveActiveProvider(activeProvider);
     setKeys(trimmed);
     setSavedMessage(true);
@@ -63,7 +70,7 @@ export default function ApiKeysPanel({ onKeysChange }: ApiKeysPanelProps) {
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <h2 className="mb-1 text-lg font-bold text-slate-800 dark:text-slate-100">
-        ⚙️ API Keys (opcional)
+        ⚙️ API Keys y modelos (opcional)
       </h2>
       <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
         Con una API key, las imágenes y PDFs escaneados se transcriben con IA
@@ -71,11 +78,19 @@ export default function ApiKeysPanel({ onKeysChange }: ApiKeysPanelProps) {
       </p>
 
       {/* Aviso de privacidad destacado */}
-      <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300">
+      <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300">
         🔒 <strong>Privacidad garantizada:</strong> tus llaves se guardan solo
         en el <code>localStorage</code> de este navegador y viajan únicamente
         del navegador a la API oficial del proveedor.{" "}
         <strong>Nunca tocan nuestro servidor.</strong>
+      </div>
+
+      {/* Nota sobre la elección de modelo */}
+      <div className="mb-5 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800 dark:border-sky-900 dark:bg-sky-950/50 dark:text-sky-300">
+        💡 <strong>Nota:</strong> Los modelos marcados como (Recomendado) son
+        más que suficientes y sumamente económicos para extraer información y
+        formatear a Markdown con total precisión. El uso de modelos avanzados
+        queda a tu total elección y consumo de créditos.
       </div>
 
       {/* Selector de proveedor activo */}
@@ -97,13 +112,18 @@ export default function ApiKeysPanel({ onKeysChange }: ApiKeysPanelProps) {
         </select>
       </label>
 
-      {/* Inputs de keys por proveedor */}
-      <div className="space-y-3">
+      {/* Key + selector de modelo por proveedor */}
+      <div className="space-y-4">
         {PROVIDERS.map((p) => (
-          <label key={p.id} className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+          <div
+            key={p.id}
+            className="rounded-lg border border-slate-200 p-3 dark:border-slate-800"
+          >
+            <span className="mb-1 block text-sm font-semibold text-slate-700 dark:text-slate-300">
               {p.label}
             </span>
+
+            {/* API key */}
             <div className="flex gap-2">
               <input
                 type={visible[p.id] ? "text" : "password"}
@@ -127,7 +147,33 @@ export default function ApiKeysPanel({ onKeysChange }: ApiKeysPanelProps) {
                 {visible[p.id] ? "🙈" : "👁️"}
               </button>
             </div>
-          </label>
+
+            {/* Selector de modelo (proveedores con visión) */}
+            {p.models.length > 0 ? (
+              <label className="mt-2 block">
+                <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
+                  Modelo
+                </span>
+                <select
+                  value={models[p.id]}
+                  onChange={(e) =>
+                    setModels((prev) => ({ ...prev, [p.id]: e.target.value }))
+                  }
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                >
+                  {p.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+                Sin visión: no procesa imágenes ni PDFs escaneados.
+              </p>
+            )}
+          </div>
         ))}
       </div>
 

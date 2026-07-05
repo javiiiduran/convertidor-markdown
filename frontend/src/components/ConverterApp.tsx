@@ -95,8 +95,9 @@ export default function ConverterApp() {
           role="status"
         >
           <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
-          Convirtiendo <strong>{currentFile}</strong>… Si el servidor gratuito
-          estaba dormido, puede tardar hasta un minuto.
+          Convirtiendo <strong>{currentFile}</strong>… El procesamiento puede
+          tomar hasta un minuto dependiendo del tamaño del documento. Por
+          favor, espera.
         </div>
       )}
 

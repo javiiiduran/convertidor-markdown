@@ -45,6 +45,8 @@ interface LlmRequest {
   mimeType: string; // p. ej. image/png o application/pdf
   filename: string;
   apiKey: string;
+  /** Id del modelo elegido por el usuario (leído de localStorage). */
+  model: string;
 }
 
 /** Despachador principal: enruta al proveedor elegido. */
@@ -99,7 +101,7 @@ async function raiseHttpError(providerName: string, response: Response): Promise
 // OpenAI — Responses API (soporta imagen y PDF vía base64)
 // ---------------------------------------------------------------------------
 
-async function convertWithOpenAI({ base64, mimeType, filename, apiKey }: LlmRequest): Promise<string> {
+async function convertWithOpenAI({ base64, mimeType, filename, apiKey, model }: LlmRequest): Promise<string> {
   const isPdf = mimeType === "application/pdf";
   const fileContent = isPdf
     ? {
@@ -119,7 +121,7 @@ async function convertWithOpenAI({ base64, mimeType, filename, apiKey }: LlmRequ
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model,
       instructions: SYSTEM_PROMPT,
       input: [
         {
@@ -150,7 +152,7 @@ async function convertWithOpenAI({ base64, mimeType, filename, apiKey }: LlmRequ
 // Anthropic — Messages API (imagen y PDF nativos)
 // ---------------------------------------------------------------------------
 
-async function convertWithAnthropic({ base64, mimeType, apiKey }: LlmRequest): Promise<string> {
+async function convertWithAnthropic({ base64, mimeType, apiKey, model }: LlmRequest): Promise<string> {
   const isPdf = mimeType === "application/pdf";
   const fileBlock = isPdf
     ? {
@@ -173,7 +175,7 @@ async function convertWithAnthropic({ base64, mimeType, apiKey }: LlmRequest): P
       "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
+      model,
       max_tokens: 8192,
       system: SYSTEM_PROMPT,
       messages: [
@@ -202,9 +204,9 @@ async function convertWithAnthropic({ base64, mimeType, apiKey }: LlmRequest): P
 // Google Gemini — generateContent (imagen y PDF vía inline_data)
 // ---------------------------------------------------------------------------
 
-async function convertWithGemini({ base64, mimeType, apiKey }: LlmRequest): Promise<string> {
+async function convertWithGemini({ base64, mimeType, apiKey, model }: LlmRequest): Promise<string> {
   const response = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
       method: "POST",
       headers: {

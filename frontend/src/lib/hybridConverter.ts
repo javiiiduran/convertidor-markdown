@@ -72,7 +72,8 @@ export async function convertFile(file: File): Promise<ConversionResult> {
   const isImage = IMAGE_MIME_TYPES.has(mimeType);
   const isPdf = mimeType === PDF_MIME_TYPE;
 
-  const { provider, key } = getActiveKey();
+  // Lectura dinámica de localStorage: proveedor, key y modelo elegidos.
+  const { provider, key, model } = getActiveKey();
   const hasVisionKey = key.length > 0 && VISION_PROVIDERS.has(provider);
 
   // --- Validación temprana: las imágenes SIEMPRE necesitan visión ---
@@ -97,6 +98,7 @@ export async function convertFile(file: File): Promise<ConversionResult> {
       mimeType,
       filename: file.name,
       apiKey: key,
+      model,
     });
     return {
       markdown,
